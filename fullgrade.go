@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -17,6 +18,16 @@ type Event struct {
 	Command  string `json:"command"`
 	Text     string `json:"text,omitempty"`
 	ExitCode *int   `json:"exit_code,omitempty"`
+}
+
+type Module struct {
+	Name    string   `json:"name"`
+	Command []string `json:"command"`
+	Enabled bool     `json:"enabled"`
+}
+
+type Config struct {
+	Steps []Module `json:"steps"`
 }
 
 // removes ANSI escape codes from a string, relevant for distrobox.
@@ -32,10 +43,13 @@ func printOutput(event string, command string, text string, exitCode *int) {
 		Text:     text,
 		ExitCode: exitCode,
 	}
-	data, err := json.Marshal(evt)
-	if err == nil {
-		fmt.Println(string(data))
-	}
+
+	evt.Text = stripANSI(evt.Text)
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.Encode(evt)
+
 }
 
 func runModule(commandName string, name string, args ...string) int {
@@ -99,15 +113,34 @@ func streamReader(r io.Reader, commandName string, eventType string) {
 	for scanner.Scan() {
 		printOutput(eventType, commandName, scanner.Text(), nil)
 	}
+	if err := scanner.Err(); err != nil {
+		printOutput("error", "Fullgrade", "Error with fullgrade command reader: "+err.Error(), nil)
+	}
 }
 
 func main() {
+
+	data, err := os.ReadFile("fullconf.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var conf Config
+	if err := json.Unmarshal(data, &conf); err != nil {
+		log.Fatal(err)
+	}
+
 	printOutput("start", "Fullgrade", "starting full upgrade", nil)
 
-	runModule("System", "rpm-ostree", "upgrade", "--unchanged-exit-77")
-	runModule("Brew", "bash", "-c", "brew update && brew upgrade -y")
-	runModule("Flatpak", "flatpak", "update", "-y")
-	runModule("Distrobox", "distrobox-upgrade", "--all")
+	for _, module := range conf.Steps {
+		if len(module.Command) == 0 {
+			printOutput("error", module.Name, "no command specified", nil)
+			continue
+		}
+		if module.Enabled == true {
+			runModule(module.Name, module.Command[0], module.Command[1:]...)
+		}
+	}
 
 	exitZero := 0
 	printOutput("complete", "Fullgrade", "completed full upgrade", &exitZero)
