@@ -3,22 +3,22 @@
     {
       "name": "System",
       "command": ["rpm-ostree", "upgrade"],
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "Brew",
-      "command": ["bash", "-c", "brew update && brew upgrade -y --dry-run"],
+      "command": ["bash", "-c", "brew update && brew upgrade -y"],
       "enabled": true
     },
     {
       "name": "Flatpak",
       "command": ["flatpak", "update", "-y"],
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "Distrobox",
       "command": ["distrobox-upgrade", "--all"],
-      "enabled": false
+      "enabled": true
     }
   ]
 }

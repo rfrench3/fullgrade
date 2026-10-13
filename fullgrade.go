@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"os"
@@ -11,6 +13,10 @@ import (
 	"regexp"
 	"sync"
 )
+
+var logJson bool
+var noColor bool
+var labelWidth int
 
 // JSON used as output for easy parsing.
 type Event struct {
@@ -30,10 +36,25 @@ type Config struct {
 	Steps []Module `json:"steps"`
 }
 
-// removes ANSI escape codes from a string, relevant for distrobox.
+// removes ANSI escape codes from a string, relevant for distrobox in JSON mode.
 func stripANSI(s string) string {
 	var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 	return ansiRegex.ReplaceAllString(s, "")
+}
+
+func colorFor(name string) int {
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	return int((h.Sum32()+5)%6) + 31 // 31-36: red through cyan
+}
+
+// color codes for non-JSON output
+func addANSI(s string) string {
+	if noColor {
+		return s
+	}
+
+	return fmt.Sprintf("\x1b[%dm%s\x1b[0m", colorFor(s), s)
 }
 
 func printOutput(event string, command string, text string, exitCode *int) {
@@ -44,12 +65,23 @@ func printOutput(event string, command string, text string, exitCode *int) {
 		ExitCode: exitCode,
 	}
 
-	evt.Text = stripANSI(evt.Text)
+	if logJson {
+		evt.Text = stripANSI(evt.Text)
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetEscapeHTML(false)
-	enc.Encode(evt)
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetEscapeHTML(false)
+		enc.Encode(evt)
+		return
+	}
 
+	label := addANSI(fmt.Sprintf("%-*s|", labelWidth, evt.Command))
+	line := fmt.Sprintf("%s %s\n", label, evt.Text)
+
+	if event == "error" {
+		fmt.Fprint(os.Stderr, line)
+	} else {
+		fmt.Fprint(os.Stdout, line)
+	}
 }
 
 func runModule(commandName string, name string, args ...string) int {
@@ -67,7 +99,7 @@ func runModule(commandName string, name string, args ...string) int {
 		return 1
 	}
 
-	printOutput("start", commandName, "", nil)
+	printOutput("start", commandName, "Module starting", nil)
 
 	if err := cmd.Start(); err != nil {
 		printOutput("error", commandName, err.Error(), nil)
@@ -103,7 +135,7 @@ func runModule(commandName string, name string, args ...string) int {
 		}
 	}
 
-	printOutput("complete", commandName, "", &exitCode)
+	printOutput("complete", commandName, "Module completed", &exitCode)
 	return exitCode
 }
 
@@ -119,6 +151,8 @@ func streamReader(r io.Reader, commandName string, eventType string) {
 }
 
 func main() {
+	flag.BoolVar(&logJson, "json", false, "Send all output to stdout in JSON")
+	flag.Parse()
 
 	data, err := os.ReadFile("fullconf.json")
 	if err != nil {
@@ -128,6 +162,13 @@ func main() {
 	var conf Config
 	if err := json.Unmarshal(data, &conf); err != nil {
 		log.Fatal(err)
+	}
+
+	labelWidth = len("Fullgrade")
+	for _, m := range conf.Steps {
+		if len(m.Name) > labelWidth {
+			labelWidth = len(m.Name)
+		}
 	}
 
 	printOutput("start", "Fullgrade", "starting full upgrade", nil)
